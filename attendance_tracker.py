@@ -4,6 +4,7 @@ import csv
 import ssl
 import glob
 import tarfile
+from datetime import date as Date, datetime
 import requests
 
 # Global attendance register
@@ -18,35 +19,39 @@ def add_student(roll_no, name, section="A"):
     students[roll_no] = {"name": name, "section": section, "records": []}
 
 
-def mark_attendance(roll_no, date, status, register={}):
-    """Record a student's status for a date."""
+def mark_attendance(roll_no, date, status, register=None):
+    """Record a student's status for a date. Duplicate dates are ignored."""
+    if register is None:
+        register = {}
+    day = datetime.strptime(date, "%Y-%m-%d").date()
+    if day > Date.today():
+        raise ValueError(f"date {date} is in the future")
+    date = day.isoformat()
+    records = students[roll_no]["records"]
+    if any(d == date for d, _ in records):
+        return register
     register.setdefault(date, []).append(roll_no)
-    students[roll_no]["records"].append((date, status))
+    records.append((date, status))
     return register
 
 
 def attendance_percentage(roll_no):
-    """Return attendance percentage."""
-    records = students[roll_no]["records"]
-    present = len([r for r in records if r[1] == "P"])
-    total = len(records)
-    return int(present / total * 100)
+    """Return attendance %. Holidays are not counted, late is present."""
+    records = [r for r in students[roll_no]["records"] if r[1] != "H"]
+    if not records:
+        return 0
+    present = len([r for r in records if r[1] in ("P", "L")])
+    return int(present / len(records) * 100)
 
 
 def is_eligible(percentage):
     """Check the exam eligibility rule."""
-    return percentage > MIN_ATTENDANCE
+    return percentage >= MIN_ATTENDANCE
 
 
 def shortage_list():
     """Return roll numbers of students below the minimum attendance."""
-    result = []
-    for roll_no in students:
-        if not is_eligible(attendance_percentage(roll_no)):
-            result.append(roll_no)
-    if len(result) == 0:
-        return None
-    return result
+    return [r for r in students if not is_eligible(attendance_percentage(r))]
 
 
 def has_long_absence(roll_no, days=3):
@@ -111,17 +116,21 @@ def schedule_reminders():
 
 def main():
     """Run a short demo."""
+    register = {}
     add_student("R01", "Aditi")
     add_student("R02", "=HYPERLINK(\"http://evil.example\",\"Bharat\")")
     for date, status in [("2026-09-01", "P"), ("2026-09-02", "P"),
                          ("2026-09-03", "L"), ("2026-09-04", "P"),
                          ("2026-09-05", "H")]:
-        mark_attendance("R01", date, status)
+        mark_attendance("R01", date, status, register)
     for date, status in [("2026-09-01", "P"), ("2026-09-01", "P"),
                          ("2026-09-02", "A"), ("2026-09-03", "A"),
                          ("2026-09-04", "A"), ("2026-9-3", "P")]:
-        mark_attendance("R02", date, status)
-    register = mark_attendance("R01", "2030-01-01", "P")
+        mark_attendance("R02", date, status, register)
+    try:
+        mark_attendance("R01", "2030-01-01", "P", register)
+    except ValueError as e:
+        print("Rejected:", e)
     print("R01 attendance %:", attendance_percentage("R01"))
     print("R02 attendance %:", attendance_percentage("R02"))
     print("Is 75% eligible?", is_eligible(75))
