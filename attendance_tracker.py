@@ -1,13 +1,15 @@
 """Student attendance tracker for a college."""
+import os
 import csv
 import ssl
-import subprocess
+import glob
+import tarfile
 import requests
 
 # Global attendance register
 students = {}
 ERP_URL = "https://erp.college.example/api/attendance"
-ERP_API_KEY = "erp-live-4f9c2a7d81"
+ERP_API_KEY = os.environ.get("ERP_API_KEY", "")
 MIN_ATTENDANCE = 75
 
 
@@ -59,13 +61,20 @@ def latest_date(roll_no):
     return max(r[0] for r in students[roll_no]["records"])
 
 
+def safe_cell(value):
+    """Stop spreadsheet apps from running a value as a formula."""
+    if value.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def export_csv(path="attendance.csv"):
     """Write each student's attendance percentage to a CSV file."""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["roll_no", "name", "percentage"])
         for roll_no, student in students.items():
-            writer.writerow([roll_no, student["name"],
+            writer.writerow([roll_no, safe_cell(student["name"]),
                              attendance_percentage(roll_no)])
     return path
 
@@ -74,16 +83,18 @@ def sync_to_erp(roll_no):
     """Send a student's attendance percentage to the ERP system."""
     payload = {"roll_no": roll_no, "pct": attendance_percentage(roll_no)}
     response = requests.post(ERP_URL, json=payload,
-                             headers={"X-API-Key": ERP_API_KEY}, verify=False)
+                             headers={"X-API-Key": ERP_API_KEY}, timeout=10)
     return response.status_code
 
 
 def backup_reports():
     """Archive all CSV reports."""
-    subprocess.Popen("tar -czf reports_backup.tgz *.csv", shell=True)
+    with tarfile.open("reports_backup.tgz", "w:gz") as tar:
+        for name in glob.glob("*.csv"):
+            tar.add(name)
 
 
-def legacy_channel(version=ssl.PROTOCOL_TLSv1):
+def legacy_channel(version=ssl.PROTOCOL_TLS_CLIENT):
     """Create an SSL context."""
     return ssl.SSLContext(version)
 
@@ -95,7 +106,7 @@ def run_job(command, shell=False):
 
 def schedule_reminders():
     """Schedule SMS reminders for students with a shortage."""
-    return run_job("send_sms --shortage", shell=True)
+    return run_job("send_sms --shortage")
 
 
 def main():
